@@ -7,8 +7,10 @@ full design.
 
 ## Status
 
-Phase 1 — engine + Lichess explorer spike. Given a position, prints Stockfish's
-candidate lines next to Lichess's human stats in one merged table.
+Phase 2 — the SQLite repertoire graph: positions/edges keyed by normalized FEN
+(transpositions collapse to one node), move-commit operations, and the
+normalized per-line engine cache. Phase 1 (the engine + Lichess explorer fusion
+table) remains runnable via the spike below.
 
 ## Requirements
 
@@ -46,3 +48,13 @@ move outside the engine's MultiPV, so soundness is unknown).
 
 Engine and Lichess results are cached in `cache/chessop_cache.sqlite`, so the
 second run on a position is instant.
+
+## Tests
+
+```pwsh
+python tests/test_repertoire.py
+```
+
+Exercises the graph operations offline (no engine/network): transposition
+collapse, idempotent commits, edge flags, the normalized engine-cache
+round-trip, and illegal-move rejection.
