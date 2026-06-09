@@ -1,0 +1,16 @@
+# Secrets
+.env
+
+# Claude Code local settings (per-machine permissions)
+.claude/settings.local.json
+
+# Caches (regenerated from Stockfish + Lichess)
+cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
