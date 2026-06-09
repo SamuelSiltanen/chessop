@@ -31,7 +31,22 @@ table) remains runnable via the spike below.
 
 No other dependencies — the Lichess call uses the standard library.
 
-## Run
+## Web board (phase 3)
+
+```pwsh
+cd src
+python -m chessop.web.app
+```
+
+Then open <http://127.0.0.1:5000>. Drag a piece or click a row in the table to
+walk the tree; **Back** / **Reset** navigate. The right-hand panel is the live
+fusion view — Stockfish eval + Δcp + soundness beside Lichess games/score/freq,
+with rows tinted by signal (sound / surprise / dubious-pop / off-top5?) and dots
+marking moves already in your repertoire. The board (chessground) and chess.js
+load from a CDN, so the browser needs internet; the Lichess token is still
+required for the data panel.
+
+## Run (CLI spike)
 
 ```pwsh
 cd src

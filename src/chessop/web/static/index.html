@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>chessop</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.base.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.brown.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.cburnett.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>chessop</h1>
+    <div id="meta">
+      <span id="opening">&nbsp;</span>
+      <span id="sharp" class="sharp hidden">SHARP &mdash; only one sound move</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="left">
+      <div id="board" class="cg-wrap"></div>
+      <div id="controls">
+        <button id="back">&larr; Back</button>
+        <button id="reset">Reset</button>
+        <span id="turn"></span>
+      </div>
+      <div id="path"></div>
+    </section>
+
+    <section id="right">
+      <table id="candidates">
+        <thead>
+          <tr>
+            <th>move</th><th>eval</th><th>&Delta;cp</th>
+            <th>games</th><th>score</th><th>freq</th><th>flag</th>
+          </tr>
+        </thead>
+        <tbody><!-- filled by app.js --></tbody>
+      </table>
+      <p class="legend">
+        Row tint: <b class="k-sound">sound</b> &middot;
+        <b class="k-surprise">surprise</b> (sound but rare) &middot;
+        <b class="k-dubious">dubious-pop</b> (popular, not sound) &middot;
+        <b class="k-off">off-top5?</b> (outside engine MultiPV).
+        Click a row or drag a piece to play. Dots = already in repertoire.
+      </p>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
