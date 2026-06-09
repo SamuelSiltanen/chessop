@@ -109,7 +109,5 @@ tr.rare    { background: var(--off); }
 
 .legend { color: var(--muted); margin-top: 14px; max-width: 560px; }
 .legend b { font-weight: 600; }
-.k-sound { color: #7fcf99; }
-.k-surprise { color: #5fd08a; }
+.k-sound { color: #7aa6e0; }
 .k-dubious { color: #e0a24c; }
-.k-off { color: #b0b0b0; }
