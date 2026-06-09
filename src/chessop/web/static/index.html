@@ -30,11 +30,29 @@
     </section>
 
     <section id="right">
+      <div id="rep-bar">
+        <label>Repertoire
+          <select id="color">
+            <option value="white">White</option>
+            <option value="black">Black</option>
+          </select>
+        </label>
+        <label>Mode
+          <select id="mode">
+            <option value="impact">Largest gap</option>
+            <option value="traversal">Ordered</option>
+            <option value="free">Free roam</option>
+          </select>
+        </label>
+        <button id="next">Next gap &rarr;</button>
+        <span id="coverage"></span>
+      </div>
+
       <table id="candidates">
         <thead>
           <tr>
             <th>move</th><th>eval</th><th>&Delta;cp</th>
-            <th>games</th><th>score</th><th>freq</th><th>flag</th>
+            <th>games</th><th>score</th><th>freq</th><th>flag</th><th>rep</th>
           </tr>
         </thead>
         <tbody><!-- filled by app.js --></tbody>
@@ -47,8 +65,16 @@
         <span class="badge b-surprise">surprise</span> sound but rarely played,
         <span class="badge b-dubious">dubious-pop</span> popular yet unsound,
         <span class="badge b-rare">rare</span> too infrequent to evaluate.
-        Click a row or drag a piece to play. Dots = already in repertoire.
+        Click a row or drag a piece to play; the <b>+</b> button adds a move to
+        your repertoire (your move when it's your turn, a covered reply when it's
+        the opponent's). Dots = already in repertoire.
       </p>
+
+      <div id="notes">
+        <label for="plan">Plan for this position</label>
+        <textarea id="plan" rows="3"
+          placeholder="What does each side want here? (saved on blur)"></textarea>
+      </div>
     </section>
   </main>
 

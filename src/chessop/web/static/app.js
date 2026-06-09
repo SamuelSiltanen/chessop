@@ -60,6 +60,9 @@ function renderPanel(data, pending) {
   document.getElementById('sharp').classList.toggle('hidden', pending || !data.sharp);
   document.getElementById('turn').textContent = data.side_to_move + ' to move' + (pending ? ' · analyzing…' : '');
 
+  const plan = document.getElementById('plan');
+  if (document.activeElement !== plan) plan.value = data.plan_note || '';
+
   const tbody = document.querySelector('#candidates tbody');
   tbody.innerHTML = '';
   for (const c of data.candidates) {
@@ -72,8 +75,13 @@ function renderPanel(data, pending) {
       `<td>${c.games ? c.games.toLocaleString() : ''}</td>` +
       `<td>${pct(c.score)}</td>` +
       `<td>${c.games ? pct(c.freq) : ''}</td>` +
-      `<td class="flag">${pending ? '' : badge(c.flag)}</td>`;
+      `<td class="flag">${pending ? '' : badge(c.flag)}</td>` +
+      `<td class="act"><button class="add">${c.mine || c.covered ? '−' : '+'}</button></td>`;
     tr.addEventListener('click', () => playSan(c.san));
+    tr.querySelector('.add').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCommit(c.san, c.mine || c.covered);
+    });
     tbody.appendChild(tr);
   }
 }
@@ -129,6 +137,49 @@ function onUserMove(orig, dest) {
   refresh();
 }
 
+// --- repertoire construction ------------------------------------------------
+
+const repColor = () => document.getElementById('color').value;
+const repMode = () => document.getElementById('mode').value;
+
+async function toggleCommit(san, committed) {
+  const url = committed ? '/api/uncommit' : '/api/commit';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fen: game.fen(), san, color: repColor() }),
+  });
+  if (!res.ok) { console.error(await res.text()); return; }
+  await refresh();
+  updateCoverage();
+}
+
+function renderCoverage(cov) {
+  document.getElementById('coverage').textContent =
+    `${repColor()}: ${(cov.opponent_coverage * 100).toFixed(0)}% replies covered · ` +
+    `${cov.move_gaps} move · ${cov.cover_gaps} cover gaps`;
+}
+
+async function updateCoverage() {
+  const data = await (await fetch(`/api/frontier?color=${repColor()}&mode=free`)).json();
+  renderCoverage(data.coverage);
+}
+
+function gotoFen(f) {
+  const parts = f.split(' ');
+  game.load(parts.length === 4 ? f + ' 0 1' : f);
+  refresh();
+}
+
+async function nextGap() {
+  const url = `/api/frontier?color=${repColor()}&mode=${repMode()}` +
+    `&exclude=${encodeURIComponent(game.fen())}`;
+  const data = await (await fetch(url)).json();
+  renderCoverage(data.coverage);
+  if (data.gap) gotoFen(data.gap.fen);
+  else document.getElementById('coverage').textContent += '  — no gaps for this mode';
+}
+
 // --- boot -------------------------------------------------------------------
 
 cg = Chessground(document.getElementById('board'), {
@@ -143,5 +194,15 @@ document.getElementById('back').addEventListener('click', () => {
 document.getElementById('reset').addEventListener('click', () => {
   game.reset(); refresh();
 });
+document.getElementById('next').addEventListener('click', nextGap);
+document.getElementById('color').addEventListener('change', updateCoverage);
+document.getElementById('plan').addEventListener('blur', (e) => {
+  fetch('/api/note', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fen: game.fen(), text: e.target.value }),
+  });
+});
 
 refresh();
+updateCoverage();

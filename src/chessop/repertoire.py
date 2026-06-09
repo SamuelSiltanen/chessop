@@ -103,6 +103,37 @@ def commit_move(
     }
 
 
+def uncommit_move(
+    conn: sqlite3.Connection, from_fen: str, san: str, *, mine: bool
+) -> None:
+    """Clear one flag on an edge; delete the edge if neither flag remains."""
+    parent = fen.normalize(from_fen)
+    column = "is_mine" if mine else "is_covered"
+    conn.execute(
+        f"UPDATE edges SET {column}=0 WHERE from_fen=? AND san=?", (parent, san)
+    )
+    conn.execute(
+        "DELETE FROM edges WHERE from_fen=? AND san=?"
+        " AND is_mine=0 AND is_covered=0",
+        (parent, san),
+    )
+
+
+def set_plan_note(conn: sqlite3.Connection, fen_str: str, text: str) -> None:
+    key = fen.normalize(fen_str)
+    add_position(conn, key)
+    conn.execute("UPDATE positions SET plan_note=? WHERE fen=?", (text, key))
+
+
+def set_why_note(
+    conn: sqlite3.Connection, from_fen: str, san: str, text: str
+) -> None:
+    conn.execute(
+        "UPDATE edges SET why_note=? WHERE from_fen=? AND san=?",
+        (text, fen.normalize(from_fen), san),
+    )
+
+
 def enrich_position(conn: sqlite3.Connection, fen_str: str) -> None:
     """Fill in opening name/ECO (Lichess) and analyzed depth (Stockfish).
 

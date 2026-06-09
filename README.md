@@ -7,10 +7,10 @@ full design.
 
 ## Status
 
-Phase 2 — the SQLite repertoire graph: positions/edges keyed by normalized FEN
-(transpositions collapse to one node), move-commit operations, and the
-normalized per-line engine cache. Phase 1 (the engine + Lichess explorer fusion
-table) remains runnable via the spike below.
+Phase 4 — the interactive construction workflow: commit moves into the
+repertoire from the board, a frontier worklist (largest-gap / ordered / free
+modes), a coverage report, and per-position plan notes. Built on the phase-2
+FEN-keyed graph and the phase-3 fusion board.
 
 ## Requirements
 
@@ -41,10 +41,18 @@ python -m chessop.web.app
 Then open <http://127.0.0.1:5000>. Drag a piece or click a row in the table to
 walk the tree; **Back** / **Reset** navigate. The right-hand panel is the live
 fusion view — Stockfish eval + Δcp + soundness beside Lichess games/score/freq,
-with rows tinted by signal (sound / surprise / dubious-pop / off-top5?) and dots
-marking moves already in your repertoire. The board (chessground) and chess.js
-load from a CDN, so the browser needs internet; the Lichess token is still
-required for the data panel.
+with rows tinted by soundness and flags shown as badges (surprise / dubious-pop
+/ rare). Dots mark moves already in your repertoire.
+
+**Building a repertoire:** pick your colour (top-right), then the **+** on a row
+adds that move — your move when it's your turn, a covered reply when it's the
+opponent's. **Next gap** jumps to the next position needing work, ranked by the
+selected mode (largest gap by reach probability / ordered depth-first / free
+roam). The coverage readout shows opponent-reply coverage plus the count of
+open move and cover gaps. The **Plan** box saves a note for the current position.
+
+The board (chessground) and chess.js load from a CDN, so the browser needs
+internet; the Lichess token is still required for the data panel.
 
 ## Run (CLI spike)
 
@@ -68,8 +76,10 @@ second run on a position is instant.
 
 ```pwsh
 python tests/test_repertoire.py
+python tests/test_frontier.py
 ```
 
-Exercises the graph operations offline (no engine/network): transposition
-collapse, idempotent commits, edge flags, the normalized engine-cache
-round-trip, and illegal-move rejection.
+Exercise the logic offline (no engine/network). `test_repertoire` covers
+transposition collapse, idempotent commits, edge flags, the normalized
+engine-cache round-trip, and illegal-move rejection. `test_frontier` covers gap
+detection, reach-ranked modes, the coverage report, uncommit, and notes.
