@@ -31,10 +31,27 @@ def fmt_eval(m: Optional[dict]) -> str:
     return f"{m['cp'] / 100:+.2f}"
 
 
-def score_position(fen_str: str) -> dict:
-    eng = {m["san"]: m for m in engine.analyse(fen_str)}
+def score_position(fen_str: str, with_engine: bool = True) -> dict:
+    """Fuse the sources for a position.
+
+    with_engine=False skips all Stockfish work and returns the human data only —
+    used for the instant first paint while the engine runs (two-phase loading).
+    """
     human_list, opening = lichess.moves(fen_str)
     human = {m["san"]: m for m in human_list}
+
+    eng: dict = {}
+    if with_engine:
+        eng = {m["san"]: m for m in engine.analyse(fen_str)}
+        # Evaluate popular moves the engine's MultiPV missed, so they get a real
+        # eval instead of being left unknown.
+        offbook = [
+            h for h in human_list
+            if h["san"] not in eng and h["frequency"] >= config.OFFBOOK_EVAL_FREQ
+        ]
+        if offbook:
+            for m in engine.evaluate_moves(fen_str, [h["uci"] for h in offbook]):
+                eng[m["san"]] = m
 
     best = max(eng.values(), key=engine.sort_value) if eng else None
     best_val = engine.sort_value(best) if best else None
@@ -54,8 +71,8 @@ def score_position(fen_str: str) -> dict:
 
         freq = h["frequency"] if h else 0.0
         flag = ""
-        if e is None and h is not None:
-            flag = "off-top5?"
+        if with_engine and e is None and h is not None:
+            flag = "rare"  # below the off-book eval threshold; left unanalyzed
         elif sound and h is not None and freq < 0.05:
             flag = "surprise"
         elif sound is False and freq >= 0.10:

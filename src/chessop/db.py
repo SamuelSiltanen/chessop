@@ -43,6 +43,16 @@ CREATE TABLE IF NOT EXISTS engine_cache (
     PRIMARY KEY (fen, depth, pv_rank)
 );
 
+CREATE TABLE IF NOT EXISTS engine_move_cache (
+    fen   TEXT NOT NULL,
+    depth INTEGER NOT NULL,
+    uci   TEXT NOT NULL,
+    san   TEXT NOT NULL,
+    cp    INTEGER,
+    mate  INTEGER,
+    PRIMARY KEY (fen, depth, uci)
+);
+
 CREATE TABLE IF NOT EXISTS lichess_cache (
     fen        TEXT NOT NULL,
     params     TEXT NOT NULL,

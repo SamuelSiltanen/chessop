@@ -39,6 +39,10 @@ ENGINE_HASH_MB = 256
 DELTA_SOUND = 40      # within this of best  -> "sound" / equal-ish
 DELTA_SHARP = 80      # 2nd-best worse than this -> position is "sharp" (forced)
 COVERAGE = 0.90       # cumulative opponent frequency to cover per node
+# Popular human moves outside the engine's MultiPV get a targeted evaluation so
+# they're classified (sound / dubious) instead of left unknown. Below this
+# frequency a move stays unanalyzed ("rare").
+OFFBOOK_EVAL_FREQ = 0.04
 
 # --- Lichess opening explorer ----------------------------------------------
 # Since the Feb-2026 DDoS mitigation, the explorer requires authentication.

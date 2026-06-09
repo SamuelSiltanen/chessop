@@ -24,8 +24,9 @@ def index():
 @app.get("/api/position")
 def position():
     fen = request.args.get("fen") or config.STARTPOS_FEN
+    with_engine = request.args.get("engine", "1") != "0"
     try:
-        data = scorer.score_position(fen)
+        data = scorer.score_position(fen, with_engine=with_engine)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 

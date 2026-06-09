@@ -4,10 +4,9 @@
   --line: #3a3d42;
   --text: #e6e6e6;
   --muted: #9aa0a6;
-  --sound: rgba(70, 160, 90, 0.18);
-  --surprise: rgba(70, 160, 90, 0.38);
-  --dubious: rgba(210, 140, 40, 0.30);
-  --off: rgba(150, 150, 150, 0.16);
+  --sound: rgba(90, 130, 185, 0.16);   /* neutral blue: "playable", distinct from the green surprise badge */
+  --dubious: rgba(210, 140, 40, 0.28);
+  --off: rgba(150, 150, 150, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -89,14 +88,24 @@ tbody tr { cursor: pointer; }
 tbody tr:hover { outline: 1px solid #5a5d63; }
 
 tr.sound   { background: var(--sound); }
-tr.surprise { background: var(--surprise); }
 tr.dubious { background: var(--dubious); }
-tr.off     { background: var(--off); }
+tr.rare    { background: var(--off); }
 
 .move .dot { margin-left: 6px; font-size: 11px; }
 .dot.mine { color: #5fd08a; }
 .dot.covered { color: #6bb3ff; }
+
 .flag { color: var(--muted); }
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.b-surprise { color: #0b2a16; background: #5fd08a; }       /* bright green pill */
+.b-dubious  { color: #2a1a05; background: #e0a24c; }       /* amber pill */
+.b-rare     { color: #c9c9c9; background: transparent; border-color: #4a4d52; }
 
 .legend { color: var(--muted); margin-top: 14px; max-width: 560px; }
 .legend b { font-weight: 600; }

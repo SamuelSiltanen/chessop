@@ -42,6 +42,33 @@ def put_engine(fen_str: str, depth: int, results: list) -> None:
         )
 
 
+def get_engine_moves(fen_str: str, depth: int, ucis: list[str]) -> dict:
+    """Cached evals for specific moves, keyed by uci. Missing moves are absent."""
+    if not ucis:
+        return {}
+    key = fen.normalize(fen_str)
+    placeholders = ",".join("?" * len(ucis))
+    with db.session() as conn:
+        rows = conn.execute(
+            f"SELECT uci, san, cp, mate FROM engine_move_cache"
+            f" WHERE fen=? AND depth=? AND uci IN ({placeholders})",
+            (key, depth, *ucis),
+        ).fetchall()
+    return {r["uci"]: dict(r) for r in rows}
+
+
+def put_engine_moves(fen_str: str, depth: int, results: list) -> None:
+    if not results:
+        return
+    key = fen.normalize(fen_str)
+    with db.session() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO engine_move_cache (fen, depth, uci, san, cp, mate)"
+            " VALUES (?,?,?,?,?,?)",
+            [(key, depth, m["uci"], m["san"], m["cp"], m["mate"]) for m in results],
+        )
+
+
 def get_lichess(fen_str: str, params: str) -> Optional[dict]:
     with db.session() as conn:
         row = conn.execute(
