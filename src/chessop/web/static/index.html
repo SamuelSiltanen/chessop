@@ -44,15 +44,17 @@
             <option value="free">Free roam</option>
           </select>
         </label>
+        <button id="commit-line">&#10003; Commit line</button>
         <button id="next">Next gap &rarr;</button>
         <span id="coverage"></span>
       </div>
+      <div id="line-hint"></div>
 
       <table id="candidates">
         <thead>
           <tr>
             <th>move</th><th>eval</th><th>&Delta;cp</th>
-            <th>games</th><th>score</th><th>freq</th><th>flag</th><th>rep</th>
+            <th>games</th><th>score</th><th>freq</th><th>flag</th>
           </tr>
         </thead>
         <tbody><!-- filled by app.js --></tbody>
@@ -65,9 +67,15 @@
         <span class="badge b-surprise">surprise</span> sound but rarely played,
         <span class="badge b-dubious">dubious-pop</span> popular yet unsound,
         <span class="badge b-rare">rare</span> too infrequent to evaluate.
-        Click a row or drag a piece to play; the <b>+</b> button adds a move to
-        your repertoire (your move when it's your turn, a covered reply when it's
-        the opponent's). Dots = already in repertoire.
+        <br>
+        <b>Building:</b> just play moves to browse a line (nothing is written
+        yet); when the hint says the stopping rule is met, press
+        <b>&#10003; Commit line</b> — it sets your single move at each of your
+        turns and covers <i>all</i> frequent replies at the opponent's. Then
+        <b>Next gap</b> jumps to the next position needing your move. Dots mark
+        moves already in your repertoire
+        (<span class="dot mine">&#9679;</span> yours,
+        <span class="dot covered">&#9679;</span> covered reply).
       </p>
 
       <div id="notes">

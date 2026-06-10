@@ -39,6 +39,11 @@ ENGINE_HASH_MB = 256
 DELTA_SOUND = 40      # within this of best  -> "sound" / equal-ish
 DELTA_SHARP = 80      # 2nd-best worse than this -> position is "sharp" (forced)
 COVERAGE = 0.90       # cumulative opponent frequency to cover per node
+# Stopping rule for a browsed line: once reach probability (product of opponent
+# move frequencies along the line) drops below this, the line is deep enough and
+# the "commit line" hint lights up — unless the current position is sharp (only
+# one sound move), in which case we keep extending.
+REACH_FLOOR = 0.01
 # Popular human moves outside the engine's MultiPV get a targeted evaluation so
 # they're classified (sound / dubious) instead of left unknown. Below this
 # frequency a move stays unanalyzed ("rare").

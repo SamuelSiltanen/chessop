@@ -4,6 +4,25 @@ import { Chess } from 'https://cdn.jsdelivr.net/npm/chess.js@1/+esm';
 const game = new Chess();
 let cg;
 
+// Construction is asymmetric and line-based: you *browse* a line forward (it's
+// tentative — nothing is written), then commit the whole line in one action.
+// Committing sets your single move at each of your nodes and fans out every
+// frequent reply at each opponent node. So we track, per ply from the line's
+// root, the reach probability (product of opponent move frequencies) and whether
+// the line is still tentative — both drive the "commit line" hint.
+let lineRoot = game.fen();      // where the current browsed line starts
+let reachByPly = [1.0];         // reach[k] = reach after k plies
+let tentativeByPly = [false];   // tentative[k] = any uncommitted edge so far
+let lastCandidates = [];        // candidates of the position currently shown
+// Move-number context for the path readout. Jumping to a gap deep in the tree
+// starts numbering from the gap's real depth, not from move 1.
+let lineStartNumber = 1;        // fullmove number at the line root
+let lineStartWhite = true;      // is the line root a white-to-move position?
+
+const repColor = () => document.getElementById('color').value;
+const repMode = () => document.getElementById('mode').value;
+const myColorChar = () => (repColor() === 'white' ? 'w' : 'b');
+
 // --- chess.js -> chessground helpers ---------------------------------------
 
 function turnColor() {
@@ -24,6 +43,35 @@ function lastMove() {
   if (!h.length) return undefined;
   const last = h[h.length - 1];
   return [last.from, last.to];
+}
+
+// --- line tracking ----------------------------------------------------------
+
+function trackPush(san, mover) {
+  const c = lastCandidates.find((x) => x.san === san);
+  const f = c ? c.freq || 0 : 0;
+  const prevReach = reachByPly[reachByPly.length - 1];
+  // Your own moves are ~certain; only opponent moves shrink reach.
+  reachByPly.push(mover !== myColorChar() ? prevReach * f : prevReach);
+  const prevTent = tentativeByPly[tentativeByPly.length - 1];
+  const committed = c ? c.mine || c.covered : false;
+  tentativeByPly.push(prevTent || !committed);
+}
+
+function resetTracking(reach = 1.0) {
+  lineRoot = game.fen();
+  reachByPly = [reach];
+  tentativeByPly = [false];
+}
+
+// Apply a move (SAN string or {from,to,promotion}) and update tracking.
+function applyMove(mv) {
+  const mover = game.turn();      // side to move *before* the move
+  let res;
+  try { res = game.move(mv); } catch { return false; }
+  if (!res) return false;
+  trackPush(res.san, mover);
+  return true;
 }
 
 // --- rendering --------------------------------------------------------------
@@ -56,7 +104,7 @@ function dots(c) {
 }
 
 function renderPanel(data, pending) {
-  document.getElementById('opening').textContent = data.opening || ' ';
+  document.getElementById('opening').textContent = data.opening || ' ';
   document.getElementById('sharp').classList.toggle('hidden', pending || !data.sharp);
   document.getElementById('turn').textContent = data.side_to_move + ' to move' + (pending ? ' · analyzing…' : '');
 
@@ -75,23 +123,59 @@ function renderPanel(data, pending) {
       `<td>${c.games ? c.games.toLocaleString() : ''}</td>` +
       `<td>${pct(c.score)}</td>` +
       `<td>${c.games ? pct(c.freq) : ''}</td>` +
-      `<td class="flag">${pending ? '' : badge(c.flag)}</td>` +
-      `<td class="act"><button class="add">${c.mine || c.covered ? '−' : '+'}</button></td>`;
+      `<td class="flag">${pending ? '' : badge(c.flag)}</td>`;
     tr.addEventListener('click', () => playSan(c.san));
-    tr.querySelector('.add').addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleCommit(c.san, c.mine || c.covered);
-    });
     tbody.appendChild(tr);
   }
+
+  lastCandidates = data.candidates;
+  if (!pending) updateLineHint(data);
+}
+
+function updateLineHint(data) {
+  const el = document.getElementById('line-hint');
+  if (!game.history().length) { el.textContent = ''; el.classList.remove('met'); return; }
+  const reach = reachByPly[reachByPly.length - 1];
+  const tent = tentativeByPly[tentativeByPly.length - 1];
+  const floor = data.reach_floor ?? 0.01;
+  const r = (reach * 100).toFixed(1) + '%';
+
+  let text, met = false;
+  if (data.in_repertoire && tent) {
+    text = '↩ transposes into your repertoire — commit line';
+    met = true;
+  } else if (data.sharp && reach < floor) {
+    text = `sharp: one sound move — keep extending (reach ${r})`;
+  } else if (reach < floor) {
+    text = `stopping rule met (reach ${r}) — commit line`;
+    met = true;
+  } else {
+    text = `reach ${r}`;
+  }
+  el.textContent = text;
+  el.classList.toggle('met', met);
+}
+
+function flashHint(text) {
+  const el = document.getElementById('line-hint');
+  el.textContent = text;
+  el.classList.remove('met');
 }
 
 function renderPath() {
   const sans = game.history();
   const out = [];
-  for (let i = 0; i < sans.length; i += 2) {
-    const n = i / 2 + 1;
-    out.push(`${n}.${sans[i]}${sans[i + 1] ? ' ' + sans[i + 1] : ''}`);
+  let num = lineStartNumber;
+  let i = 0;
+  // A line that starts with Black to move opens with "N...<black>".
+  if (!lineStartWhite && sans.length) {
+    out.push(`${num}...${sans[0]}`);
+    i = 1;
+    num++;
+  }
+  for (; i < sans.length; i += 2) {
+    out.push(`${num}.${sans[i]}${sans[i + 1] ? ' ' + sans[i + 1] : ''}`);
+    num++;
   }
   document.getElementById('path').textContent = out.join('  ');
 }
@@ -126,37 +210,38 @@ async function refresh() {
 refresh.seq = 0;
 
 function playSan(san) {
-  // chess.js throws on an illegal SAN; ignore stray clicks.
-  try { game.move(san); } catch { return; }
+  if (!applyMove(san)) return;   // ignore stray clicks on illegal SAN
   refresh();
 }
 
 function onUserMove(orig, dest) {
   // Auto-queen on promotion; promotion UI is a later refinement.
-  game.move({ from: orig, to: dest, promotion: 'q' });
+  applyMove({ from: orig, to: dest, promotion: 'q' });
   refresh();
 }
 
 // --- repertoire construction ------------------------------------------------
 
-const repColor = () => document.getElementById('color').value;
-const repMode = () => document.getElementById('mode').value;
-
-async function toggleCommit(san, committed) {
-  const url = committed ? '/api/uncommit' : '/api/commit';
-  const res = await fetch(url, {
+async function commitLine() {
+  const sans = game.history();
+  if (!sans.length) { flashHint('nothing to commit — play a line first'); return; }
+  const res = await fetch('/api/commit_line', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fen: game.fen(), san, color: repColor() }),
+    body: JSON.stringify({ root: lineRoot, sans, color: repColor() }),
   });
-  if (!res.ok) { console.error(await res.text()); return; }
-  await refresh();
-  updateCoverage();
+  if (!res.ok) { console.error(await res.text()); flashHint('commit failed — see console'); return; }
+  const out = await res.json();
+  renderCoverage(out.coverage);
+  tentativeByPly = tentativeByPly.map(() => false);   // the whole line is committed now
+  await refresh();                                    // repaint committed dots
+  const s = out.summary;
+  flashHint(`committed: ${s.my_moves} of your moves · ${s.covered_edges} replies covered`);
 }
 
 function renderCoverage(cov) {
   document.getElementById('coverage').textContent =
-    `${repColor()}: ${(cov.opponent_coverage * 100).toFixed(0)}% replies covered · ` +
+    `${repColor()}: ${(cov.prepared * 100).toFixed(0)}% of replies answered · ` +
     `${cov.move_gaps} move · ${cov.cover_gaps} cover gaps`;
 }
 
@@ -165,9 +250,16 @@ async function updateCoverage() {
   renderCoverage(data.coverage);
 }
 
-function gotoFen(f) {
+function gotoFen(f, reach, ply = 0) {
+  // Number the path from the gap's real depth. Root is the start position
+  // (White, ply 0), so after `ply` half-moves it's White to move iff ply is
+  // even, at fullmove ply//2 + 1.
+  lineStartNumber = Math.floor(ply / 2) + 1;
+  lineStartWhite = ply % 2 === 0;
   const parts = f.split(' ');
-  game.load(parts.length === 4 ? f + ' 0 1' : f);
+  game.load(parts.length === 4 ? `${f} 0 ${lineStartNumber}` : f);
+  // The gap is an existing, committed node: a fresh line root at its own reach.
+  resetTracking(reach ?? 1.0);
   refresh();
 }
 
@@ -176,7 +268,7 @@ async function nextGap() {
     `&exclude=${encodeURIComponent(game.fen())}`;
   const data = await (await fetch(url)).json();
   renderCoverage(data.coverage);
-  if (data.gap) gotoFen(data.gap.fen);
+  if (data.gap) gotoFen(data.gap.fen, data.gap.reach, data.gap.ply ?? 0);
   else document.getElementById('coverage').textContent += '  — no gaps for this mode';
 }
 
@@ -189,13 +281,20 @@ cg = Chessground(document.getElementById('board'), {
 });
 
 document.getElementById('back').addEventListener('click', () => {
-  if (game.history().length) { game.undo(); refresh(); }
+  if (game.history().length) {
+    game.undo();
+    if (reachByPly.length > 1) { reachByPly.pop(); tentativeByPly.pop(); }
+    refresh();
+  }
 });
 document.getElementById('reset').addEventListener('click', () => {
-  game.reset(); refresh();
+  game.reset(); resetTracking();
+  lineStartNumber = 1; lineStartWhite = true;
+  refresh();
 });
+document.getElementById('commit-line').addEventListener('click', commitLine);
 document.getElementById('next').addEventListener('click', nextGap);
-document.getElementById('color').addEventListener('change', updateCoverage);
+document.getElementById('color').addEventListener('change', () => { updateCoverage(); refresh(); });
 document.getElementById('plan').addEventListener('blur', (e) => {
   fetch('/api/note', {
     method: 'POST',

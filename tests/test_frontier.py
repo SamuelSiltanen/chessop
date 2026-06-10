@@ -37,6 +37,7 @@ def test_frontier_and_coverage():
         # Empty White repertoire -> the only gap is "play your first move".
         g = frontier.next_gap(conn, START, "white", "impact", freq_fn=freq_fn)
         assert g["fen"] == fenmod.normalize(START) and g["role"] == "mine", g
+        assert g["ply"] == 0, g                     # root is at depth 0
 
         # Commit 1.e4; Black replies are now an opponent node needing coverage.
         after_e4 = repertoire.commit_move(conn, START, "e4", mine=True)["to_fen"]
@@ -44,6 +45,7 @@ def test_frontier_and_coverage():
 
         g = frontier.next_gap(conn, START, "white", "impact", freq_fn=freq_fn)
         assert g["fen"] == after_e4 and g["role"] == "opp", g
+        assert g["ply"] == 1, g                     # one half-move deep
 
         # Cover the two main replies (0.60 + 0.35 = 0.95 >= COVERAGE).
         after_c5 = repertoire.commit_move(conn, after_e4, "c5", mine=False)["to_fen"]
@@ -53,7 +55,10 @@ def test_frontier_and_coverage():
         assert cov["cover_gaps"] == 0, cov
         assert cov["move_gaps"] == 2, cov           # both replies need my move
         assert abs(cov["opponent_coverage"] - 0.95) < 1e-9, cov
-        print("ok  coverage report: 95% opp coverage, 2 move gaps, 0 cover gaps")
+        # Breadth (95%) is not readiness: with no responses committed, the
+        # honest "prepared" number is 0 — you'd be out of book immediately.
+        assert cov["prepared"] == 0.0, cov
+        print("ok  coverage report: 95% breadth but 0% prepared, 2 move gaps")
 
         # Impact mode picks the higher-reach line (c5: 0.60 > e5: 0.35).
         g = frontier.next_gap(conn, START, "white", "impact", freq_fn=freq_fn)
@@ -74,6 +79,14 @@ def test_frontier_and_coverage():
         cov2 = frontier.coverage(conn, START, "white", freq_fn=freq_fn)
         assert cov2["cover_gaps"] == 1, cov2        # 0.60 < COVERAGE again
         print("ok  uncommit reopens the coverage gap")
+
+        # Now commit a response to 1...c5; that reply becomes "answered" while
+        # the new opponent node (after 2.Nf3) is not, so prepared sits between.
+        repertoire.commit_move(conn, after_c5, "Nf3", mine=True)
+        cov3 = frontier.coverage(conn, START, "white", freq_fn=freq_fn)
+        # (1.0*0.60 answered at after_e4 + 0.60*0 at after_Nf3) / (1.0 + 0.60)
+        assert abs(cov3["prepared"] - 0.375) < 1e-9, cov3
+        print("ok  answering a reply raises prepared above 0")
 
 
 def test_notes_persist():

@@ -39,7 +39,9 @@ def walk(
 
     Returns (reach, records): `reach` maps fen -> best reach probability;
     `records` is one dict per node in first-visit order, each with role
-    ('mine'|'opp'), is_gap, and (for opp nodes) covered_freq.
+    ('mine'|'opp'), is_gap, `ply` (half-moves from the root along the path it
+    was first reached by — for display/numbering), and (for opp nodes)
+    covered_freq.
     """
     side = "w" if color == "white" else "b"
     root = fenmod.normalize(root_fen)
@@ -54,9 +56,9 @@ def walk(
             fcache[node] = freq_fn(node)
         return fcache[node]
 
-    stack = [(root, 1.0)]
+    stack = [(root, 1.0, 0)]
     while stack:
-        node, r = stack.pop()
+        node, r, ply = stack.pop()
         if r <= reach.get(node, -1.0):
             continue  # already reached at least this well; avoids cycles
         reach[node] = r
@@ -68,28 +70,43 @@ def walk(
             seen.add(node)
             if stm == side:
                 has_move = any(e["is_mine"] for e in edges)
-                records.append({"fen": node, "role": "mine", "is_gap": not has_move})
+                records.append({"fen": node, "role": "mine",
+                                "is_gap": not has_move, "ply": ply})
             else:
+                fnode = freqs(node)
                 covered = [e for e in edges if e["is_covered"]]
-                cov = sum(freqs(node).get(e["san"], 0.0) for e in covered)
+                cov = 0.0       # reply mass you've acknowledged (breadth)
+                answered = 0.0  # reply mass you actually have a response ready for
+                for e in covered:
+                    fr = fnode.get(e["san"], 0.0)
+                    cov += fr
+                    child = e["to_fen"]
+                    has_move = any(ce["is_mine"]
+                                   for ce in repertoire.children(conn, child))
+                    # "Answered" = you've committed your reply there, or the line
+                    # is rare enough that the stopping rule says you can stop.
+                    if has_move or r * fr < config.REACH_FLOOR:
+                        answered += fr
                 records.append(
                     {
                         "fen": node,
                         "role": "opp",
                         "is_gap": cov < config.COVERAGE,
                         "covered_freq": cov,
+                        "answered_freq": answered,
+                        "ply": ply,
                     }
                 )
 
         if stm == side:
             for e in edges:
                 if e["is_mine"]:
-                    stack.append((e["to_fen"], r))
+                    stack.append((e["to_fen"], r, ply + 1))
         else:
             f = freqs(node)
             for e in edges:
                 if e["is_covered"]:
-                    stack.append((e["to_fen"], r * f.get(e["san"], 0.0)))
+                    stack.append((e["to_fen"], r * f.get(e["san"], 0.0), ply + 1))
 
     return reach, records
 
@@ -133,13 +150,22 @@ def coverage(
     color: str,
     freq_fn: FreqFn = _lichess_freqs,
 ) -> dict:
-    """Completeness report: opponent-reply coverage plus gap counts."""
+    """Completeness report: how ready you actually are, plus gap counts.
+
+    `prepared` is the headline number — the reach-weighted fraction of opponent
+    replies you have an answer ready for (your move committed in the resulting
+    position, or a deliberate stop below the reach floor). It's low for a shallow
+    repertoire and climbs as you fill in responses, unlike raw breadth coverage
+    (`opponent_coverage`), which the fan-out pins near the floor by construction.
+    """
     reach, records = walk(conn, root_fen, color, freq_fn)
     opp = [r for r in records if r["role"] == "opp"]
     den = sum(reach[r["fen"]] for r in opp)
-    num = sum(reach[r["fen"]] * r["covered_freq"] for r in opp)
+    cov_num = sum(reach[r["fen"]] * r["covered_freq"] for r in opp)
+    ans_num = sum(reach[r["fen"]] * r["answered_freq"] for r in opp)
     return {
-        "opponent_coverage": (num / den) if den else 1.0,
+        "prepared": (ans_num / den) if den else 0.0,
+        "opponent_coverage": (cov_num / den) if den else 1.0,
         "move_gaps": sum(1 for r in records if r["role"] == "mine" and r["is_gap"]),
         "cover_gaps": sum(1 for r in records if r["role"] == "opp" and r["is_gap"]),
         "positions": len(records),

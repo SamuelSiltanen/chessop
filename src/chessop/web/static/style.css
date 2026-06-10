@@ -133,8 +133,20 @@ tr.rare    { background: var(--off); }
   font-variant-numeric: tabular-nums;
 }
 
-td.act { text-align: center; }
-.add { width: 26px; padding: 2px 0; line-height: 1; font-size: 15px; }
+#commit-line {
+  border-color: #3f6b46;
+  background: #24412a;
+  color: #cfe9d4;
+}
+#commit-line:hover { border-color: #5fd08a; }
+
+#line-hint {
+  margin: -4px 0 12px;
+  min-height: 1.2em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+#line-hint.met { color: #7fdca0; font-weight: 600; }
 
 #notes { margin-top: 16px; }
 #notes label { display: block; color: var(--muted); margin-bottom: 6px; }

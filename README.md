@@ -44,12 +44,24 @@ fusion view — Stockfish eval + Δcp + soundness beside Lichess games/score/fre
 with rows tinted by soundness and flags shown as badges (surprise / dubious-pop
 / rare). Dots mark moves already in your repertoire.
 
-**Building a repertoire:** pick your colour (top-right), then the **+** on a row
-adds that move — your move when it's your turn, a covered reply when it's the
-opponent's. **Next gap** jumps to the next position needing work, ranked by the
+**Building a repertoire** is asymmetric and line-based: you choose *one* move
+for yourself but stay ready for *all* of the opponent's frequent replies. Pick
+your colour (top-right), then just **play moves** to browse a line forward —
+nothing is written yet, so you can see where the line leads before committing.
+A hint under the bar tracks the line's *reach* (how often you'd actually face
+it) and lights up when the **stopping rule** is met (reach below the floor, or
+the line transposes into a position already in your repertoire); a sharp
+position — only one sound move — tells you to keep extending instead.
+
+Press **✓ Commit line** to write the whole line at once: your single move at
+each of your turns, and a fan-out covering every frequent reply (up to the
+cumulative-frequency floor) at each of the opponent's. Those new reply positions
+become gaps; **Next gap** jumps to the next one needing your move, ranked by the
 selected mode (largest gap by reach probability / ordered depth-first / free
-roam). The coverage readout shows opponent-reply coverage plus the count of
-open move and cover gaps. The **Plan** box saves a note for the current position.
+roam). The readout shows the reach-weighted **% of replies answered** — replies
+you actually have a response ready for, not just acknowledged — plus the count
+of open move and cover gaps. It's low for a shallow repertoire and climbs as you
+fill in responses. The **Plan** box saves a note for the current position.
 
 The board (chessground) and chess.js load from a CDN, so the browser needs
 internet; the Lichess token is still required for the data panel.

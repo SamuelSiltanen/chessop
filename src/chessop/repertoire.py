@@ -1,8 +1,9 @@
 """The repertoire graph: positions (nodes) and committed moves (edges).
 
-Operations are deliberately storage-only and offline — they don't call
-Stockfish or Lichess. Enrichment (opening names, engine depth) is layered on top
-via `enrich_position`, which the interactive workflow (phase 4) will drive.
+Most operations are storage-only and offline. The exceptions are `commit_line`
+and `enrich_position`, which consult Lichess/Stockfish; `commit_line` takes an
+injectable `replies_fn` (defaulting to a Lichess-backed one) so its graph logic
+stays testable offline, mirroring `frontier.py`.
 
 Transpositions are handled natively: because positions are keyed by normalized
 FEN, the same position reached by different move orders is one node. A commit
@@ -10,7 +11,7 @@ that lands on a node already reachable by a *different* move is reported as a
 transposition.
 """
 import sqlite3
-from typing import Optional, TypedDict
+from typing import Callable, Optional, TypedDict
 
 from . import config, engine, fen, lichess
 
@@ -117,6 +118,105 @@ def uncommit_move(
         " AND is_mine=0 AND is_covered=0",
         (parent, san),
     )
+
+
+def set_my_move(
+    conn: sqlite3.Connection, from_fen: str, san: str
+) -> CommitResult:
+    """Commit `san` as *the* move you play here — exactly one per position.
+
+    Any other move previously marked `is_mine` at this node is unset (and the
+    edge dropped if it carried no `is_covered` flag). This is the asymmetric
+    half of construction: one chosen move for you, vs. a fan-out of replies for
+    the opponent (`commit_line`).
+    """
+    parent = fen.normalize(from_fen)
+    others = conn.execute(
+        "SELECT san FROM edges WHERE from_fen=? AND is_mine=1 AND san<>?",
+        (parent, san),
+    ).fetchall()
+    for o in others:
+        uncommit_move(conn, parent, o["san"], mine=True)
+    return commit_move(conn, parent, san, mine=True)
+
+
+FreqList = Callable[[str], list[dict]]
+
+
+def _lichess_replies(fen_str: str) -> list[dict]:
+    """Opponent replies with their frequencies (Lichess-backed default)."""
+    human, _ = lichess.moves(fen_str)
+    return [{"san": m["san"], "frequency": m["frequency"]} for m in human]
+
+
+def _covered_replies(replies: list[dict], spine_san: Optional[str]) -> list[str]:
+    """The frequent replies to cover: most-played first until the cumulative
+    frequency reaches COVERAGE. The line's own (spine) reply is always kept, so
+    the committed line stays connected even when it's an off-beat choice."""
+    chosen: list[str] = []
+    cum = 0.0
+    for r in sorted(replies, key=lambda r: r["frequency"], reverse=True):
+        chosen.append(r["san"])
+        cum += r["frequency"]
+        if cum >= config.COVERAGE:
+            break
+    if spine_san and spine_san not in chosen:
+        chosen.append(spine_san)
+    return chosen
+
+
+class LineResult(TypedDict):
+    end_fen: str        # normalized FEN the line ends on
+    my_moves: int       # your single moves set along the spine
+    opp_nodes: int      # opponent nodes fanned out
+    covered_edges: int  # new covered-reply edges created
+
+
+def commit_line(
+    conn: sqlite3.Connection,
+    root_fen: str,
+    sans: list[str],
+    color: str,
+    *,
+    replies_fn: FreqList = _lichess_replies,
+) -> LineResult:
+    """Commit a whole browsed line at once, asymmetrically.
+
+    Walking `sans` from `root_fen` (which must already be in the repertoire, or
+    be the true root — keeping everything edge-connected): at each of *your*
+    nodes the spine move becomes your single move; at each *opponent* node all
+    frequent replies are covered (fan-out), not just the one walked. The fan-out
+    also runs on the terminal node if the opponent is to move there, surfacing
+    the next layer of "play your move" gaps.
+    """
+    side = "w" if color == "white" else "b"
+    node = fen.normalize(root_fen)
+    add_position(conn, node)
+
+    res: LineResult = {"end_fen": node, "my_moves": 0,
+                       "opp_nodes": 0, "covered_edges": 0}
+
+    def fan_out(at: str, spine_san: Optional[str]) -> None:
+        res["opp_nodes"] += 1
+        for s in _covered_replies(replies_fn(at), spine_san):
+            if commit_move(conn, at, s, mine=False)["edge_created"]:
+                res["covered_edges"] += 1
+
+    for san in sans:
+        if fen.side_to_move(node) == side:
+            set_my_move(conn, node, san)
+            res["my_moves"] += 1
+        else:
+            fan_out(node, san)
+        board = fen.to_board(node)
+        board.push(board.parse_san(san))   # raises on illegal SAN
+        node = fen.normalize(board.fen())
+
+    if fen.side_to_move(node) != side:
+        fan_out(node, None)
+
+    res["end_fen"] = node
+    return res
 
 
 def set_plan_note(conn: sqlite3.Connection, fen_str: str, text: str) -> None:

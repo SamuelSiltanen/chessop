@@ -42,6 +42,7 @@ def position():
         }
     data["in_repertoire"] = node is not None
     data["plan_note"] = node["plan_note"] if node and node["plan_note"] else ""
+    data["reach_floor"] = config.REACH_FLOOR
     for cand in data["candidates"]:
         state = committed.get(cand["san"])
         cand["mine"] = state["mine"] if state else False
@@ -65,6 +66,27 @@ def commit():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})
+
+
+@app.post("/api/commit_line")
+def commit_line_route():
+    """Commit a whole browsed line: your single move at each of your nodes, all
+    frequent replies fanned out at each opponent node. `root` is where the line
+    started (the true start position, or an in-repertoire gap you jumped to), so
+    the new edges stay connected to the rest of the graph."""
+    body = request.get_json(force=True)
+    root = body.get("root") or ROOT
+    sans = body.get("sans", [])
+    color = body.get("color", "white")
+    try:
+        with db.session() as conn:
+            summary = repertoire.commit_line(conn, root, sans, color)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    # Separate session so a coverage hiccup can't roll back the commit above.
+    with db.session() as conn:
+        cov = frontier.coverage(conn, ROOT, color)
+    return jsonify({"ok": True, "summary": summary, "coverage": cov})
 
 
 @app.post("/api/uncommit")
