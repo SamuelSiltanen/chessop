@@ -50,7 +50,11 @@ and a Black Sicilian). The **Repertoire** dropdown switches between them;
 **Rename**/**Delete** manage it. Positions and the engine/Lichess caches are
 shared across repertoires; only your committed moves and notes are per-repertoire.
 Removing work: the **✕** on a committed row deletes that move and prunes any
-lines orphaned below it; **Delete** drops a whole repertoire.
+lines orphaned below it; **Delete** drops a whole repertoire. **Export PGN**
+downloads the repertoire as one annotated PGN — your move as the mainline,
+opponent replies as variations (most-frequent first), and plan / "why this move"
+notes as `{comments}` — which imports straight into a Lichess study, Chessable,
+or Anki for drilling.
 
 **Building a repertoire** is asymmetric and line-based: you choose *one* move
 for yourself but stay ready for *all* of the opponent's frequent replies. Pick

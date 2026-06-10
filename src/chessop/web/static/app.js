@@ -244,7 +244,7 @@ function renderRepSelect() {
   }
   if (currentRepId) sel.value = currentRepId;
   const have = reps.length > 0;
-  for (const id of ['rep-rename', 'rep-delete', 'commit-line', 'next']) {
+  for (const id of ['rep-rename', 'rep-delete', 'rep-export', 'commit-line', 'next']) {
     document.getElementById(id).disabled = !have;
   }
 }
@@ -410,6 +410,9 @@ document.getElementById('rep-new').addEventListener('click', createRep);
 document.getElementById('new-rep').addEventListener('close', (e) => onNewRepClosed(e.target));
 document.getElementById('rep-rename').addEventListener('click', renameRep);
 document.getElementById('rep-delete').addEventListener('click', deleteRep);
+document.getElementById('rep-export').addEventListener('click', () => {
+  if (repId()) window.location = `/api/repertoires/${repId()}/pgn`;
+});
 document.getElementById('plan').addEventListener('blur', (e) => {
   if (!repId()) return;
   fetch('/api/note', {

@@ -8,9 +8,9 @@ Repertoire-scoped routes take a `rep` id; the repertoire's colour is read from
 its record (not passed by the client). `/api/position` works without a `rep`
 too, so the board is usable before any repertoire exists.
 """
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 
-from .. import config, db, frontier, repertoire, scorer
+from .. import config, db, frontier, pgn_export, repertoire, scorer
 
 ROOT = config.STARTPOS_FEN
 
@@ -61,6 +61,23 @@ def repertoires_modify(rep_id: int):
             return jsonify({"error": "name required"}), 400
         repertoire.rename_repertoire(conn, rep_id, name)
         return jsonify(_rep_dict(repertoire.get_repertoire(conn, rep_id)))
+
+
+@app.get("/api/repertoires/<int:rep_id>/pgn")
+def export_pgn_route(rep_id: int):
+    """Download the repertoire as one annotated PGN (notes become comments)."""
+    with db.session() as conn:
+        rep = repertoire.get_repertoire(conn, rep_id)
+        if rep is None:
+            return jsonify({"error": "no such repertoire"}), 404
+        pgn = pgn_export.export_pgn(conn, rep_id)
+    safe = "".join(c if (c.isalnum() or c in "-_ ") else "_" for c in rep["name"])
+    safe = safe.strip() or "repertoire"
+    return Response(
+        pgn,
+        mimetype="application/x-chess-pgn",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.pgn"'},
+    )
 
 
 def _require_rep(conn, rep_id):
