@@ -1,4 +1,4 @@
-"""Phase-2 checks for the repertoire graph.
+"""Phase-2 checks for the repertoire graph, plus named-repertoire scoping.
 
 Runs as a plain script (no test framework needed):
 
@@ -25,17 +25,26 @@ from chessop import cache, db, fen, repertoire  # noqa: E402
 START = config.STARTPOS_FEN
 
 
+def _new_rep(name="Test", color="white"):
+    with db.session() as conn:
+        return repertoire.create_repertoire(conn, name, color)
+
+
+# A default repertoire for the graph-mechanics tests.
+REP = _new_rep()
+
+
 def test_transposition_collapses_to_one_node():
     with db.session() as conn:
         # Order A: 1.Nf3 Nf6 2.Nc3
-        a1 = repertoire.commit_move(conn, START, "Nf3", mine=True)
-        a2 = repertoire.commit_move(conn, a1["to_fen"], "Nf6", mine=False)
-        a3 = repertoire.commit_move(conn, a2["to_fen"], "Nc3", mine=True)
+        a1 = repertoire.commit_move(conn, REP, START, "Nf3", mine=True)
+        a2 = repertoire.commit_move(conn, REP, a1["to_fen"], "Nf6", mine=False)
+        a3 = repertoire.commit_move(conn, REP, a2["to_fen"], "Nc3", mine=True)
 
         # Order B: 1.Nc3 Nf6 2.Nf3 -> same final position
-        b1 = repertoire.commit_move(conn, START, "Nc3", mine=True)
-        b2 = repertoire.commit_move(conn, b1["to_fen"], "Nf6", mine=False)
-        b3 = repertoire.commit_move(conn, b2["to_fen"], "Nf3", mine=True)
+        b1 = repertoire.commit_move(conn, REP, START, "Nc3", mine=True)
+        b2 = repertoire.commit_move(conn, REP, b1["to_fen"], "Nf6", mine=False)
+        b3 = repertoire.commit_move(conn, REP, b2["to_fen"], "Nf3", mine=True)
 
         assert not any(r["transposition"] for r in (a1, a2, a3, b1, b2)), \
             "fresh edges should not report transposition"
@@ -50,7 +59,8 @@ def test_transposition_collapses_to_one_node():
 
         # The leaf has two distinct incoming edges (one per move order).
         incoming = conn.execute(
-            "SELECT COUNT(*) c FROM edges WHERE to_fen=?", (leaf,)
+            "SELECT COUNT(*) c FROM edges WHERE repertoire_id=? AND to_fen=?",
+            (REP, leaf),
         ).fetchone()["c"]
         assert incoming == 2, f"expected 2 incoming edges, got {incoming}"
     print("ok  transposition collapses to one node")
@@ -58,12 +68,13 @@ def test_transposition_collapses_to_one_node():
 
 def test_commit_is_idempotent():
     with db.session() as conn:
-        first = repertoire.commit_move(conn, START, "e4", mine=True)
-        again = repertoire.commit_move(conn, START, "e4", mine=True)
+        first = repertoire.commit_move(conn, REP, START, "e4", mine=True)
+        again = repertoire.commit_move(conn, REP, START, "e4", mine=True)
         assert first["edge_created"] and not again["edge_created"]
         rows = conn.execute(
-            "SELECT COUNT(*) c FROM edges WHERE from_fen=? AND san='e4'",
-            (fen.normalize(START),),
+            "SELECT COUNT(*) c FROM edges"
+            " WHERE repertoire_id=? AND from_fen=? AND san='e4'",
+            (REP, fen.normalize(START)),
         ).fetchone()["c"]
         assert rows == 1, "re-committing must not duplicate the edge"
     print("ok  commit is idempotent")
@@ -71,9 +82,11 @@ def test_commit_is_idempotent():
 
 def test_flags_set_correctly():
     with db.session() as conn:
-        repertoire.commit_move(conn, START, "d4", mine=True)
+        repertoire.commit_move(conn, REP, START, "d4", mine=True)
         edge = conn.execute(
-            "SELECT is_mine, is_covered FROM edges WHERE san='d4'"
+            "SELECT is_mine, is_covered FROM edges"
+            " WHERE repertoire_id=? AND san='d4'",
+            (REP,),
         ).fetchone()
         assert edge["is_mine"] == 1 and edge["is_covered"] == 0
     print("ok  flags set correctly")
@@ -98,11 +111,63 @@ def test_engine_cache_roundtrip_normalized():
 def test_illegal_san_raises():
     with db.session() as conn:
         try:
-            repertoire.commit_move(conn, START, "e5", mine=True)  # illegal for white
+            repertoire.commit_move(conn, REP, START, "e5", mine=True)  # illegal
         except ValueError:
             print("ok  illegal SAN raises ValueError")
             return
     raise AssertionError("illegal SAN should have raised")
+
+
+def test_repertoire_isolation():
+    a = _new_rep("Iso A", "white")
+    b = _new_rep("Iso B", "white")
+    with db.session() as conn:
+        repertoire.commit_move(conn, a, START, "e4", mine=True)
+        repertoire.set_plan_note(conn, a, START, "A's plan")
+        assert {e["san"] for e in repertoire.children(conn, a, START)} == {"e4"}
+        # B shares positions but sees none of A's edges or notes.
+        assert repertoire.children(conn, b, START) == []
+        assert repertoire.get_plan_note(conn, b, START) == ""
+        assert repertoire.get_plan_note(conn, a, START) == "A's plan"
+    print("ok  edges and notes are isolated per repertoire")
+
+
+def test_delete_cascades():
+    r = _new_rep("Doomed", "white")
+    with db.session() as conn:
+        repertoire.commit_move(conn, r, START, "e4", mine=True)
+        repertoire.set_plan_note(conn, r, START, "note")
+        repertoire.delete_repertoire(conn, r)
+        assert repertoire.get_repertoire(conn, r) is None
+        n_edges = conn.execute(
+            "SELECT COUNT(*) c FROM edges WHERE repertoire_id=?", (r,)
+        ).fetchone()["c"]
+        n_notes = conn.execute(
+            "SELECT COUNT(*) c FROM repertoire_notes WHERE repertoire_id=?", (r,)
+        ).fetchone()["c"]
+        assert n_edges == 0 and n_notes == 0, "delete must cascade edges + notes"
+    print("ok  deleting a repertoire cascades its edges and notes")
+
+
+def test_remove_move_prunes_orphans():
+    r = _new_rep("Prune", "white")
+    with db.session() as conn:
+        e4 = repertoire.commit_move(conn, r, START, "e4", mine=True)["to_fen"]
+        c5 = repertoire.commit_move(conn, r, e4, "c5", mine=False)["to_fen"]
+        repertoire.commit_move(conn, r, c5, "Nf3", mine=True)
+        total = conn.execute(
+            "SELECT COUNT(*) c FROM edges WHERE repertoire_id=?", (r,)
+        ).fetchone()["c"]
+        assert total == 3, total
+
+        # Removing 1.e4 orphans the entire subtree below it.
+        removed = repertoire.remove_move(conn, r, START, "e4")
+        assert removed == 3, removed
+        left = conn.execute(
+            "SELECT COUNT(*) c FROM edges WHERE repertoire_id=?", (r,)
+        ).fetchone()["c"]
+        assert left == 0, left
+    print("ok  remove_move deletes the edge and prunes orphaned lines")
 
 
 if __name__ == "__main__":
@@ -111,4 +176,7 @@ if __name__ == "__main__":
     test_flags_set_correctly()
     test_engine_cache_roundtrip_normalized()
     test_illegal_san_raises()
+    test_repertoire_isolation()
+    test_delete_cascades()
+    test_remove_move_prunes_orphans()
     print("\nAll phase-2 checks passed.")

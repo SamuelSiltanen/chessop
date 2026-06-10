@@ -44,9 +44,17 @@ fusion view — Stockfish eval + Δcp + soundness beside Lichess games/score/fre
 with rows tinted by soundness and flags shown as badges (surprise / dubious-pop
 / rare). Dots mark moves already in your repertoire.
 
+You can keep several **named repertoires** side by side (e.g. a White e4 system
+and a Black Sicilian). The **Repertoire** dropdown switches between them;
+**+ New** creates one (its colour is fixed at creation and orients the board),
+**Rename**/**Delete** manage it. Positions and the engine/Lichess caches are
+shared across repertoires; only your committed moves and notes are per-repertoire.
+Removing work: the **✕** on a committed row deletes that move and prunes any
+lines orphaned below it; **Delete** drops a whole repertoire.
+
 **Building a repertoire** is asymmetric and line-based: you choose *one* move
 for yourself but stay ready for *all* of the opponent's frequent replies. Pick
-your colour (top-right), then just **play moves** to browse a line forward —
+or create a repertoire, then just **play moves** to browse a line forward —
 nothing is written yet, so you can see where the line leads before committing.
 A hint under the bar tracks the line's *reach* (how often you'd actually face
 it) and lights up when the **stopping rule** is met (reach below the floor, or

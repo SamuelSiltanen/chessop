@@ -148,6 +148,69 @@ tr.rare    { background: var(--off); }
 }
 #line-hint.met { color: #7fdca0; font-weight: 600; }
 
+button:disabled { opacity: 0.4; cursor: default; }
+button:disabled:hover { border-color: var(--line); }
+
+td.act { text-align: center; width: 28px; padding: 2px 4px; }
+.rm {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 2px 4px;
+  line-height: 1;
+  font-size: 13px;
+}
+.rm:hover { color: #e06a6a; border: none; }
+
+/* Per-branch completeness bar shown after a committed move. */
+.cbar {
+  display: inline-block;
+  width: 42px;
+  height: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+  background: #3a3d42;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.cbar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #c9803a, #5fd08a);
+  border-radius: 3px;
+}
+
+dialog#new-rep {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px 22px;
+  min-width: 280px;
+}
+dialog#new-rep::backdrop { background: rgba(0, 0, 0, 0.5); }
+dialog#new-rep h3 { margin: 0 0 14px; font-size: 16px; }
+#new-rep-form label { display: block; margin-bottom: 12px; color: var(--muted); }
+#new-rep-form input,
+#new-rep-form select {
+  margin-top: 4px;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 8px;
+}
+#new-rep-form menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 6px 0 0;
+  padding: 0;
+}
+#nr-ok { border-color: #3f6b46; background: #24412a; color: #cfe9d4; }
+#nr-ok:hover { border-color: #5fd08a; }
+
 #notes { margin-top: 16px; }
 #notes label { display: block; color: var(--muted); margin-bottom: 6px; }
 #plan {

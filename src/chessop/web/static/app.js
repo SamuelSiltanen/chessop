@@ -4,24 +4,30 @@ import { Chess } from 'https://cdn.jsdelivr.net/npm/chess.js@1/+esm';
 const game = new Chess();
 let cg;
 
+// --- named repertoires ------------------------------------------------------
+
+let reps = [];           // [{id, name, color}]
+let currentRepId = null;
+
+const currentRep = () => reps.find((r) => r.id === currentRepId) || null;
+const repId = () => currentRepId;
+const repColor = () => (currentRep() ? currentRep().color : 'white');
+const myColorChar = () => (repColor() === 'white' ? 'w' : 'b');
+const repMode = () => document.getElementById('mode').value;
+
 // Construction is asymmetric and line-based: you *browse* a line forward (it's
 // tentative — nothing is written), then commit the whole line in one action.
-// Committing sets your single move at each of your nodes and fans out every
-// frequent reply at each opponent node. So we track, per ply from the line's
-// root, the reach probability (product of opponent move frequencies) and whether
-// the line is still tentative — both drive the "commit line" hint.
-let lineRoot = game.fen();      // where the current browsed line starts
-let reachByPly = [1.0];         // reach[k] = reach after k plies
-let tentativeByPly = [false];   // tentative[k] = any uncommitted edge so far
-let lastCandidates = [];        // candidates of the position currently shown
-// Move-number context for the path readout. Jumping to a gap deep in the tree
-// starts numbering from the gap's real depth, not from move 1.
-let lineStartNumber = 1;        // fullmove number at the line root
-let lineStartWhite = true;      // is the line root a white-to-move position?
-
-const repColor = () => document.getElementById('color').value;
-const repMode = () => document.getElementById('mode').value;
-const myColorChar = () => (repColor() === 'white' ? 'w' : 'b');
+// We track, per ply from the line's root, the reach probability (product of
+// opponent move frequencies) and whether the line is still tentative — both
+// drive the "commit line" hint.
+let lineRoot = game.fen();
+let reachByPly = [1.0];
+let tentativeByPly = [false];
+let lastCandidates = [];
+// Move-number context for the path readout (a deep gap starts numbering from
+// its real depth, not move 1).
+let lineStartNumber = 1;
+let lineStartWhite = true;
 
 // --- chess.js -> chessground helpers ---------------------------------------
 
@@ -51,7 +57,6 @@ function trackPush(san, mover) {
   const c = lastCandidates.find((x) => x.san === san);
   const f = c ? c.freq || 0 : 0;
   const prevReach = reachByPly[reachByPly.length - 1];
-  // Your own moves are ~certain; only opponent moves shrink reach.
   reachByPly.push(mover !== myColorChar() ? prevReach * f : prevReach);
   const prevTent = tentativeByPly[tentativeByPly.length - 1];
   const committed = c ? c.mine || c.covered : false;
@@ -64,7 +69,6 @@ function resetTracking(reach = 1.0) {
   tentativeByPly = [false];
 }
 
-// Apply a move (SAN string or {from,to,promotion}) and update tracking.
 function applyMove(mv) {
   const mover = game.turn();      // side to move *before* the move
   let res;
@@ -80,8 +84,6 @@ function pct(x) {
   return x === null || x === undefined ? '' : (x * 100).toFixed(1) + '%';
 }
 
-// Row tint reflects soundness only; the flag is shown as a separate badge so
-// "surprise" (a sound move) no longer collides with the plain "sound" tint.
 function rowClass(c, pending) {
   if (pending) return '';
   if (c.flag === 'dubious-pop') return 'dubious';
@@ -103,6 +105,14 @@ function dots(c) {
   return s;
 }
 
+// A small bar showing how built-out the branch under a committed move is
+// (0 = bare stub, full = built to where lines get rare).
+function compBar(c) {
+  if (c.completeness === null || c.completeness === undefined) return '';
+  const p = Math.round(c.completeness * 100);
+  return `<span class="cbar" title="branch ${p}% built"><span style="width:${p}%"></span></span>`;
+}
+
 function renderPanel(data, pending) {
   document.getElementById('opening').textContent = data.opening || ' ';
   document.getElementById('sharp').classList.toggle('hidden', pending || !data.sharp);
@@ -114,17 +124,21 @@ function renderPanel(data, pending) {
   const tbody = document.querySelector('#candidates tbody');
   tbody.innerHTML = '';
   for (const c of data.candidates) {
+    const committed = c.mine || c.covered;
     const tr = document.createElement('tr');
     tr.className = rowClass(c, pending);
     tr.innerHTML =
-      `<td class="move">${c.san}${dots(c)}</td>` +
+      `<td class="move">${c.san}${dots(c)}${compBar(c)}</td>` +
       `<td>${pending ? '…' : c.eval}</td>` +
       `<td>${pending || c.delta === null ? '' : c.delta}</td>` +
       `<td>${c.games ? c.games.toLocaleString() : ''}</td>` +
       `<td>${pct(c.score)}</td>` +
       `<td>${c.games ? pct(c.freq) : ''}</td>` +
-      `<td class="flag">${pending ? '' : badge(c.flag)}</td>`;
+      `<td class="flag">${pending ? '' : badge(c.flag)}</td>` +
+      `<td class="act">${committed && repId() ? '<button class="rm" title="remove from repertoire">&#10005;</button>' : ''}</td>`;
     tr.addEventListener('click', () => playSan(c.san));
+    const rm = tr.querySelector('.rm');
+    if (rm) rm.addEventListener('click', (e) => { e.stopPropagation(); removeMove(c.san); });
     tbody.appendChild(tr);
   }
 
@@ -167,7 +181,6 @@ function renderPath() {
   const out = [];
   let num = lineStartNumber;
   let i = 0;
-  // A line that starts with Black to move opens with "N...<black>".
   if (!lineStartWhite && sans.length) {
     out.push(`${num}...${sans[0]}`);
     i = 1;
@@ -191,52 +204,152 @@ async function refresh() {
   });
   renderPath();
 
-  // Two-phase: paint the human data instantly, then fill in the engine eval.
-  // A request token guards against fast navigation showing stale results.
   const fen = game.fen();
   const token = ++refresh.seq;
+  const repQ = repId() ? '&rep=' + repId() : '';
 
   async function load(engine, pending) {
-    const q = '/api/position?fen=' + encodeURIComponent(fen) + (engine ? '' : '&engine=0');
+    const q = '/api/position?fen=' + encodeURIComponent(fen) + repQ + (engine ? '' : '&engine=0');
     const data = await (await fetch(q)).json();
-    if (token !== refresh.seq) return;           // a newer navigation won
+    if (token !== refresh.seq) return;
     if (data.error) { console.error(data.error); return; }
     renderPanel(data, pending);
   }
 
-  await load(false, true);   // fast: Lichess only
-  await load(true, false);   // full: Stockfish merged in
+  await load(false, true);
+  await load(true, false);
 }
 refresh.seq = 0;
 
 function playSan(san) {
-  if (!applyMove(san)) return;   // ignore stray clicks on illegal SAN
+  if (!applyMove(san)) return;
   refresh();
 }
 
 function onUserMove(orig, dest) {
-  // Auto-queen on promotion; promotion UI is a later refinement.
   applyMove({ from: orig, to: dest, promotion: 'q' });
   refresh();
 }
 
-// --- repertoire construction ------------------------------------------------
+// --- repertoire management --------------------------------------------------
+
+function renderRepSelect() {
+  const sel = document.getElementById('rep');
+  sel.innerHTML = '';
+  for (const r of reps) {
+    const o = document.createElement('option');
+    o.value = r.id;
+    o.textContent = `${r.name} — ${r.color}`;
+    sel.appendChild(o);
+  }
+  if (currentRepId) sel.value = currentRepId;
+  const have = reps.length > 0;
+  for (const id of ['rep-rename', 'rep-delete', 'commit-line', 'next']) {
+    document.getElementById(id).disabled = !have;
+  }
+}
+
+async function loadReps(selectId) {
+  reps = await (await fetch('/api/repertoires')).json();
+  if (reps.length === 0) currentRepId = null;
+  else if (selectId && reps.some((r) => r.id === selectId)) currentRepId = selectId;
+  else if (!reps.some((r) => r.id === currentRepId)) currentRepId = reps[0].id;
+  renderRepSelect();
+}
+
+function orientBoard() {
+  cg.set({ orientation: repColor() });
+}
+
+async function switchRep(id) {
+  currentRepId = id;
+  game.reset();
+  resetTracking();
+  lineStartNumber = 1; lineStartWhite = true;
+  orientBoard();
+  await refresh();
+  updateCoverage();
+}
+
+function createRep() {
+  // A proper dialog so colour is an explicit choice (White or Black).
+  const dlg = document.getElementById('new-rep');
+  document.getElementById('nr-name').value = 'My repertoire';
+  document.getElementById('nr-color').value = 'white';
+  dlg.returnValue = '';
+  dlg.showModal();
+}
+
+async function onNewRepClosed(dlg) {
+  if (dlg.returnValue !== 'create') return;
+  const name = document.getElementById('nr-name').value.trim() || 'Untitled';
+  const color = document.getElementById('nr-color').value;
+  const res = await fetch('/api/repertoires', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, color }),
+  });
+  if (!res.ok) { console.error(await res.text()); return; }
+  const rep = await res.json();
+  await loadReps(rep.id);
+  switchRep(rep.id);
+}
+
+async function renameRep() {
+  const r = currentRep();
+  if (!r) return;
+  const name = prompt('Rename repertoire:', r.name);
+  if (!name) return;
+  await fetch('/api/repertoires/' + r.id, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  await loadReps(r.id);
+}
+
+async function deleteRep() {
+  const r = currentRep();
+  if (!r) return;
+  if (!confirm(`Delete repertoire "${r.name}"? This removes all its moves and notes.`)) return;
+  await fetch('/api/repertoires/' + r.id, { method: 'DELETE' });
+  await loadReps();
+  switchRep(currentRepId);
+}
+
+// --- construction -----------------------------------------------------------
 
 async function commitLine() {
+  if (!repId()) { flashHint('create a repertoire first'); return; }
   const sans = game.history();
   if (!sans.length) { flashHint('nothing to commit — play a line first'); return; }
   const res = await fetch('/api/commit_line', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root: lineRoot, sans, color: repColor() }),
+    body: JSON.stringify({ rep: repId(), root: lineRoot, sans }),
   });
   if (!res.ok) { console.error(await res.text()); flashHint('commit failed — see console'); return; }
   const out = await res.json();
   renderCoverage(out.coverage);
-  tentativeByPly = tentativeByPly.map(() => false);   // the whole line is committed now
-  await refresh();                                    // repaint committed dots
+  tentativeByPly = tentativeByPly.map(() => false);
+  await refresh();
   const s = out.summary;
   flashHint(`committed: ${s.my_moves} of your moves · ${s.covered_edges} replies covered`);
+}
+
+async function removeMove(san) {
+  if (!repId()) return;
+  if (!confirm(`Remove ${san} from "${currentRep().name}"? Any lines below it are pruned.`)) return;
+  const res = await fetch('/api/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rep: repId(), fen: game.fen(), san }),
+  });
+  if (!res.ok) { console.error(await res.text()); return; }
+  const out = await res.json();
+  await refresh();
+  updateCoverage();
+  flashHint(`removed ${out.removed} edge${out.removed === 1 ? '' : 's'}`);
 }
 
 function renderCoverage(cov) {
@@ -246,28 +359,26 @@ function renderCoverage(cov) {
 }
 
 async function updateCoverage() {
-  const data = await (await fetch(`/api/frontier?color=${repColor()}&mode=free`)).json();
-  renderCoverage(data.coverage);
+  if (!repId()) { document.getElementById('coverage').textContent = 'no repertoire — click + New'; return; }
+  const data = await (await fetch(`/api/frontier?rep=${repId()}&mode=free`)).json();
+  if (data.coverage) renderCoverage(data.coverage);
 }
 
 function gotoFen(f, reach, ply = 0) {
-  // Number the path from the gap's real depth. Root is the start position
-  // (White, ply 0), so after `ply` half-moves it's White to move iff ply is
-  // even, at fullmove ply//2 + 1.
   lineStartNumber = Math.floor(ply / 2) + 1;
   lineStartWhite = ply % 2 === 0;
   const parts = f.split(' ');
   game.load(parts.length === 4 ? `${f} 0 ${lineStartNumber}` : f);
-  // The gap is an existing, committed node: a fresh line root at its own reach.
   resetTracking(reach ?? 1.0);
   refresh();
 }
 
 async function nextGap() {
-  const url = `/api/frontier?color=${repColor()}&mode=${repMode()}` +
+  if (!repId()) { flashHint('create a repertoire first'); return; }
+  const url = `/api/frontier?rep=${repId()}&mode=${repMode()}` +
     `&exclude=${encodeURIComponent(game.fen())}`;
   const data = await (await fetch(url)).json();
-  renderCoverage(data.coverage);
+  if (data.coverage) renderCoverage(data.coverage);
   if (data.gap) gotoFen(data.gap.fen, data.gap.reach, data.gap.ply ?? 0);
   else document.getElementById('coverage').textContent += '  — no gaps for this mode';
 }
@@ -294,14 +405,23 @@ document.getElementById('reset').addEventListener('click', () => {
 });
 document.getElementById('commit-line').addEventListener('click', commitLine);
 document.getElementById('next').addEventListener('click', nextGap);
-document.getElementById('color').addEventListener('change', () => { updateCoverage(); refresh(); });
+document.getElementById('rep').addEventListener('change', (e) => switchRep(Number(e.target.value)));
+document.getElementById('rep-new').addEventListener('click', createRep);
+document.getElementById('new-rep').addEventListener('close', (e) => onNewRepClosed(e.target));
+document.getElementById('rep-rename').addEventListener('click', renameRep);
+document.getElementById('rep-delete').addEventListener('click', deleteRep);
 document.getElementById('plan').addEventListener('blur', (e) => {
+  if (!repId()) return;
   fetch('/api/note', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fen: game.fen(), text: e.target.value }),
+    body: JSON.stringify({ rep: repId(), fen: game.fen(), text: e.target.value }),
   });
 });
 
-refresh();
-updateCoverage();
+(async function boot() {
+  await loadReps();
+  if (currentRepId) orientBoard();
+  await refresh();
+  updateCoverage();
+})();

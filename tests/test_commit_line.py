@@ -26,6 +26,14 @@ from chessop import db, fen as fenmod, repertoire  # noqa: E402
 START = config.STARTPOS_FEN
 
 
+def _new_rep(name="CommitLine", color="white"):
+    with db.session() as conn:
+        return repertoire.create_repertoire(conn, name, color)
+
+
+REP = _new_rep()
+
+
 def fen_after(sans):
     board = fenmod.to_board(START)
     for s in sans:
@@ -49,22 +57,22 @@ def replies_fn(fen_str):
 
 
 def mine_sans(conn, fen_str):
-    return {e["san"] for e in repertoire.children(conn, fen_str) if e["is_mine"]}
+    return {e["san"] for e in repertoire.children(conn, REP, fen_str) if e["is_mine"]}
 
 
 def covered_sans(conn, fen_str):
-    return {e["san"] for e in repertoire.children(conn, fen_str) if e["is_covered"]}
+    return {e["san"] for e in repertoire.children(conn, REP, fen_str) if e["is_covered"]}
 
 
 def test_single_choice():
     with db.session() as conn:
         # An isolated node (after 1.d4 d5) so this doesn't touch the e4 line.
         node = fen_after(["d4", "d5"])
-        repertoire.set_my_move(conn, node, "c4")
-        repertoire.set_my_move(conn, node, "Nf3")   # replaces c4
+        repertoire.set_my_move(conn, REP, node, "c4")
+        repertoire.set_my_move(conn, REP, node, "Nf3")   # replaces c4
         assert mine_sans(conn, node) == {"Nf3"}, mine_sans(conn, node)
         # c4 carried no other flag, so its edge is gone entirely.
-        all_sans = {e["san"] for e in repertoire.children(conn, node)}
+        all_sans = {e["san"] for e in repertoire.children(conn, REP, node)}
         assert all_sans == {"Nf3"}, all_sans
     print("ok  set_my_move keeps exactly one of your moves per node")
 
@@ -72,7 +80,7 @@ def test_single_choice():
 def test_commit_line_asymmetry():
     sans = ["e4", "c5", "Nf3", "d6", "d4"]
     with db.session() as conn:
-        res = repertoire.commit_line(conn, START, sans, "white", replies_fn=replies_fn)
+        res = repertoire.commit_line(conn, REP, START, sans, "white", replies_fn=replies_fn)
 
         assert res["my_moves"] == 3, res          # e4, Nf3, d4
         assert res["opp_nodes"] == 3, res         # after e4, after Nf3, terminal
@@ -99,7 +107,7 @@ def test_spine_reply_always_kept():
     node = fen_after(["e4"])
     with db.session() as conn:
         res = repertoire.commit_line(
-            conn, START, ["e4", "e6"], "white", replies_fn=replies_fn
+            conn, REP, START, ["e4", "e6"], "white", replies_fn=replies_fn
         )
         # e6 (0.06) is below the cut but is the spine move -> kept; the line's
         # end position therefore exists and is connected.
@@ -117,7 +125,7 @@ def test_subroot_connectivity():
         before = repertoire.get_position(conn, fen_after(["e4", "c5", "Nf3", "Nc6"]))
         # (that node exists because Nc6 was a covered reply); give it our move.
         repertoire.commit_line(
-            conn, subroot, ["Nf3", "Nc6", "d4"], "white", replies_fn=replies_fn
+            conn, REP, subroot, ["Nf3", "Nc6", "d4"], "white", replies_fn=replies_fn
         )
         assert mine_sans(conn, fen_after(["e4", "c5", "Nf3", "Nc6"])) == {"d4"}
     print("ok  commit_line from a sub-root stays edge-connected")

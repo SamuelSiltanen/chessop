@@ -31,6 +31,7 @@ def _lichess_freqs(fen_str: str) -> dict:
 
 def walk(
     conn: sqlite3.Connection,
+    rep_id: int,
     root_fen: str,
     color: str,
     freq_fn: FreqFn = _lichess_freqs,
@@ -64,7 +65,7 @@ def walk(
         reach[node] = r
 
         stm = fenmod.side_to_move(node)
-        edges = repertoire.children(conn, node)
+        edges = repertoire.children(conn, rep_id, node)
 
         if node not in seen:
             seen.add(node)
@@ -82,7 +83,7 @@ def walk(
                     cov += fr
                     child = e["to_fen"]
                     has_move = any(ce["is_mine"]
-                                   for ce in repertoire.children(conn, child))
+                                   for ce in repertoire.children(conn, rep_id, child))
                     # "Answered" = you've committed your reply there, or the line
                     # is rare enough that the stopping rule says you can stop.
                     if has_move or r * fr < config.REACH_FLOOR:
@@ -117,6 +118,7 @@ def _gaps(reach: dict, records: list) -> list:
 
 def next_gap(
     conn: sqlite3.Connection,
+    rep_id: int,
     root_fen: str,
     color: str,
     mode: str = "impact",
@@ -131,7 +133,7 @@ def next_gap(
     """
     if mode == "free":
         return None
-    reach, records = walk(conn, root_fen, color, freq_fn)
+    reach, records = walk(conn, rep_id, root_fen, color, freq_fn)
     order = {rec["fen"]: i for i, rec in enumerate(records)}
     gaps = _gaps(reach, records)
     if exclude_fen:
@@ -146,6 +148,7 @@ def next_gap(
 
 def coverage(
     conn: sqlite3.Connection,
+    rep_id: int,
     root_fen: str,
     color: str,
     freq_fn: FreqFn = _lichess_freqs,
@@ -158,7 +161,7 @@ def coverage(
     repertoire and climbs as you fill in responses, unlike raw breadth coverage
     (`opponent_coverage`), which the fan-out pins near the floor by construction.
     """
-    reach, records = walk(conn, root_fen, color, freq_fn)
+    reach, records = walk(conn, rep_id, root_fen, color, freq_fn)
     opp = [r for r in records if r["role"] == "opp"]
     den = sum(reach[r["fen"]] for r in opp)
     cov_num = sum(reach[r["fen"]] * r["covered_freq"] for r in opp)
@@ -170,3 +173,27 @@ def coverage(
         "cover_gaps": sum(1 for r in records if r["role"] == "opp" and r["is_gap"]),
         "positions": len(records),
     }
+
+
+def branch_completeness(
+    conn: sqlite3.Connection,
+    rep_id: int,
+    parent_fen: str,
+    color: str,
+    freq_fn: FreqFn = _lichess_freqs,
+) -> dict:
+    """Per-branch completeness for the committed moves out of `parent_fen`.
+
+    Maps san -> the `prepared` fraction of the subtree that move leads to, each
+    subtree treated as its own local root. So a covered reply with nothing built
+    under it reads ~0, and a fully built-out line reads near 1 — letting the UI
+    show how complete each branch is, not just that it exists. (It is the same
+    readiness metric as `coverage`, scoped to the subtree.)
+    """
+    out: dict = {}
+    for e in repertoire.children(conn, rep_id, parent_fen):
+        if e["is_mine"] or e["is_covered"]:
+            out[e["san"]] = coverage(
+                conn, rep_id, e["to_fen"], color, freq_fn
+            )["prepared"]
+    return out

@@ -32,11 +32,11 @@
     <section id="right">
       <div id="rep-bar">
         <label>Repertoire
-          <select id="color">
-            <option value="white">White</option>
-            <option value="black">Black</option>
-          </select>
+          <select id="rep"></select>
         </label>
+        <button id="rep-new" title="New repertoire">+ New</button>
+        <button id="rep-rename" title="Rename this repertoire">Rename</button>
+        <button id="rep-delete" title="Delete this repertoire">Delete</button>
         <label>Mode
           <select id="mode">
             <option value="impact">Largest gap</option>
@@ -54,7 +54,7 @@
         <thead>
           <tr>
             <th>move</th><th>eval</th><th>&Delta;cp</th>
-            <th>games</th><th>score</th><th>freq</th><th>flag</th>
+            <th>games</th><th>score</th><th>freq</th><th>flag</th><th></th>
           </tr>
         </thead>
         <tbody><!-- filled by app.js --></tbody>
@@ -68,14 +68,20 @@
         <span class="badge b-dubious">dubious-pop</span> popular yet unsound,
         <span class="badge b-rare">rare</span> too infrequent to evaluate.
         <br>
-        <b>Building:</b> just play moves to browse a line (nothing is written
+        <b>Building:</b> pick or <b>+ New</b> a repertoire (its colour is fixed
+        when created); just play moves to browse a line (nothing is written
         yet); when the hint says the stopping rule is met, press
         <b>&#10003; Commit line</b> — it sets your single move at each of your
         turns and covers <i>all</i> frequent replies at the opponent's. Then
         <b>Next gap</b> jumps to the next position needing your move. Dots mark
-        moves already in your repertoire
+        moves in this repertoire
         (<span class="dot mine">&#9679;</span> yours,
-        <span class="dot covered">&#9679;</span> covered reply).
+        <span class="dot covered">&#9679;</span> covered reply); the bar
+        <span class="cbar"><span style="width:55%"></span></span> shows how
+        built-out that branch is (empty = a bare stub, full = built to where
+        lines get rare); the
+        <b>&#10005;</b> on a committed row removes that move and prunes any lines
+        below it.
       </p>
 
       <div id="notes">
@@ -85,6 +91,25 @@
       </div>
     </section>
   </main>
+
+  <dialog id="new-rep">
+    <form method="dialog" id="new-rep-form">
+      <h3>New repertoire</h3>
+      <label>Name
+        <input id="nr-name" type="text" value="My repertoire" autocomplete="off" />
+      </label>
+      <label>Colour
+        <select id="nr-color">
+          <option value="white">White</option>
+          <option value="black">Black</option>
+        </select>
+      </label>
+      <menu>
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="create" type="submit" id="nr-ok">Create</button>
+      </menu>
+    </form>
+  </dialog>
 
   <script type="module" src="app.js"></script>
 </body>

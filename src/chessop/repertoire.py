@@ -1,20 +1,71 @@
 """The repertoire graph: positions (nodes) and committed moves (edges).
 
+Positions and the engine/Lichess caches are *shared* analysis nodes. Edges —
+your committed moves and covered replies — and plan notes belong to one named
+**repertoire** (`repertoires` table), so you can keep several side by side
+(e.g. a White e4 system and a Black Sicilian) without them bleeding together.
+Almost every operation therefore takes a `repertoire_id`.
+
 Most operations are storage-only and offline. The exceptions are `commit_line`
 and `enrich_position`, which consult Lichess/Stockfish; `commit_line` takes an
 injectable `replies_fn` (defaulting to a Lichess-backed one) so its graph logic
 stays testable offline, mirroring `frontier.py`.
 
-Transpositions are handled natively: because positions are keyed by normalized
-FEN, the same position reached by different move orders is one node. A commit
-that lands on a node already reachable by a *different* move is reported as a
-transposition.
+Transpositions are handled natively: positions are keyed by normalized FEN, so
+the same position reached by different move orders is one node. Within a
+repertoire, a commit that lands on a node already reachable by a *different*
+move is reported as a transposition.
 """
+import datetime
 import sqlite3
 from typing import Callable, Optional, TypedDict
 
 from . import config, engine, fen, lichess
 
+
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+# --- repertoires (the named containers) ------------------------------------
+
+def create_repertoire(conn: sqlite3.Connection, name: str, color: str) -> int:
+    """Create a repertoire for `color` ('white'|'black'); returns its id."""
+    if color not in ("white", "black"):
+        raise ValueError(f"color must be 'white' or 'black', not {color!r}")
+    cur = conn.execute(
+        "INSERT INTO repertoires (name, color, created_at) VALUES (?,?,?)",
+        (name, color, _now()),
+    )
+    return int(cur.lastrowid)
+
+
+def list_repertoires(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM repertoires ORDER BY id").fetchall()
+
+
+def get_repertoire(conn: sqlite3.Connection, rep_id: int) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM repertoires WHERE id=?", (rep_id,)
+    ).fetchone()
+
+
+def rename_repertoire(conn: sqlite3.Connection, rep_id: int, name: str) -> None:
+    conn.execute("UPDATE repertoires SET name=? WHERE id=?", (name, rep_id))
+
+
+def delete_repertoire(conn: sqlite3.Connection, rep_id: int) -> None:
+    """Delete a repertoire; its edges and notes cascade away (FK ON DELETE)."""
+    conn.execute("DELETE FROM repertoires WHERE id=?", (rep_id,))
+
+
+def clear_repertoire(conn: sqlite3.Connection, rep_id: int) -> None:
+    """Empty a repertoire's moves and notes but keep the repertoire itself."""
+    conn.execute("DELETE FROM edges WHERE repertoire_id=?", (rep_id,))
+    conn.execute("DELETE FROM repertoire_notes WHERE repertoire_id=?", (rep_id,))
+
+
+# --- positions (shared nodes) ----------------------------------------------
 
 class CommitResult(TypedDict):
     to_fen: str          # normalized FEN reached by the move
@@ -49,17 +100,21 @@ def get_position(conn: sqlite3.Connection, fen_str: str) -> Optional[sqlite3.Row
     ).fetchone()
 
 
-def children(conn: sqlite3.Connection, fen_str: str) -> list[sqlite3.Row]:
+# --- edges (per repertoire) ------------------------------------------------
+
+def children(
+    conn: sqlite3.Connection, rep_id: int, fen_str: str
+) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM edges WHERE from_fen=? ORDER BY san",
-        (fen.normalize(fen_str),),
+        "SELECT * FROM edges WHERE repertoire_id=? AND from_fen=? ORDER BY san",
+        (rep_id, fen.normalize(fen_str)),
     ).fetchall()
 
 
 def commit_move(
-    conn: sqlite3.Connection, from_fen: str, san: str, *, mine: bool
+    conn: sqlite3.Connection, rep_id: int, from_fen: str, san: str, *, mine: bool
 ) -> CommitResult:
-    """Add (or update) an edge for `san` from `from_fen`.
+    """Add (or update) an edge for `san` from `from_fen` in this repertoire.
 
     `mine=True` marks it as the move you'll play; `mine=False` marks an opponent
     reply you're covering. Re-committing the same move is idempotent except that
@@ -70,9 +125,10 @@ def commit_move(
     board.push(board.parse_san(san))   # raises ValueError on an illegal/ambiguous SAN
     child = fen.normalize(board.fen())
 
-    # Transposition: is `child` already reachable via a *different* edge?
+    # Transposition: is `child` already reachable via a *different* edge here?
     incoming = conn.execute(
-        "SELECT from_fen, san FROM edges WHERE to_fen=?", (child,)
+        "SELECT from_fen, san FROM edges WHERE repertoire_id=? AND to_fen=?",
+        (rep_id, child),
     ).fetchall()
     transposition = any((r["from_fen"], r["san"]) != (parent, san) for r in incoming)
 
@@ -80,20 +136,23 @@ def commit_move(
     add_position(conn, child)
 
     existing = conn.execute(
-        "SELECT 1 FROM edges WHERE from_fen=? AND san=?", (parent, san)
+        "SELECT 1 FROM edges WHERE repertoire_id=? AND from_fen=? AND san=?",
+        (rep_id, parent, san),
     ).fetchone()
     if existing:
         column = "is_mine" if mine else "is_covered"
         conn.execute(
-            f"UPDATE edges SET {column}=1, to_fen=? WHERE from_fen=? AND san=?",
-            (child, parent, san),
+            f"UPDATE edges SET {column}=1, to_fen=?"
+            " WHERE repertoire_id=? AND from_fen=? AND san=?",
+            (child, rep_id, parent, san),
         )
         edge_created = False
     else:
         conn.execute(
-            "INSERT INTO edges (from_fen, san, to_fen, is_mine, is_covered)"
-            " VALUES (?,?,?,?,?)",
-            (parent, san, child, int(mine), int(not mine)),
+            "INSERT INTO edges"
+            " (repertoire_id, from_fen, san, to_fen, is_mine, is_covered)"
+            " VALUES (?,?,?,?,?,?)",
+            (rep_id, parent, san, child, int(mine), int(not mine)),
         )
         edge_created = True
 
@@ -105,23 +164,71 @@ def commit_move(
 
 
 def uncommit_move(
-    conn: sqlite3.Connection, from_fen: str, san: str, *, mine: bool
+    conn: sqlite3.Connection, rep_id: int, from_fen: str, san: str, *, mine: bool
 ) -> None:
     """Clear one flag on an edge; delete the edge if neither flag remains."""
     parent = fen.normalize(from_fen)
     column = "is_mine" if mine else "is_covered"
     conn.execute(
-        f"UPDATE edges SET {column}=0 WHERE from_fen=? AND san=?", (parent, san)
+        f"UPDATE edges SET {column}=0"
+        " WHERE repertoire_id=? AND from_fen=? AND san=?",
+        (rep_id, parent, san),
     )
     conn.execute(
-        "DELETE FROM edges WHERE from_fen=? AND san=?"
+        "DELETE FROM edges WHERE repertoire_id=? AND from_fen=? AND san=?"
         " AND is_mine=0 AND is_covered=0",
-        (parent, san),
+        (rep_id, parent, san),
     )
+
+
+def remove_move(
+    conn: sqlite3.Connection, rep_id: int, from_fen: str, san: str
+) -> int:
+    """Remove an edge outright, then prune whatever it orphaned.
+
+    Deleting the edge can cut a whole sub-line loose; anything no longer
+    reachable from the start position is swept away too (but a subtree still
+    reachable via a transposition survives). Returns the number of edges
+    removed in total.
+    """
+    parent = fen.normalize(from_fen)
+    conn.execute(
+        "DELETE FROM edges WHERE repertoire_id=? AND from_fen=? AND san=?",
+        (rep_id, parent, san),
+    )
+    return 1 + _prune_unreachable(conn, rep_id)
+
+
+def _prune_unreachable(conn: sqlite3.Connection, rep_id: int) -> int:
+    """Delete edges no longer reachable from the start position. Returns count."""
+    root = fen.normalize(config.STARTPOS_FEN)
+    reachable = {root}
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        for e in children(conn, rep_id, node):
+            if e["to_fen"] not in reachable:
+                reachable.add(e["to_fen"])
+                stack.append(e["to_fen"])
+
+    froms = {
+        r["from_fen"]
+        for r in conn.execute(
+            "SELECT DISTINCT from_fen FROM edges WHERE repertoire_id=?", (rep_id,)
+        )
+    }
+    removed = 0
+    for dead in froms - reachable:
+        cur = conn.execute(
+            "DELETE FROM edges WHERE repertoire_id=? AND from_fen=?",
+            (rep_id, dead),
+        )
+        removed += cur.rowcount or 0
+    return removed
 
 
 def set_my_move(
-    conn: sqlite3.Connection, from_fen: str, san: str
+    conn: sqlite3.Connection, rep_id: int, from_fen: str, san: str
 ) -> CommitResult:
     """Commit `san` as *the* move you play here — exactly one per position.
 
@@ -132,12 +239,13 @@ def set_my_move(
     """
     parent = fen.normalize(from_fen)
     others = conn.execute(
-        "SELECT san FROM edges WHERE from_fen=? AND is_mine=1 AND san<>?",
-        (parent, san),
+        "SELECT san FROM edges"
+        " WHERE repertoire_id=? AND from_fen=? AND is_mine=1 AND san<>?",
+        (rep_id, parent, san),
     ).fetchall()
     for o in others:
-        uncommit_move(conn, parent, o["san"], mine=True)
-    return commit_move(conn, parent, san, mine=True)
+        uncommit_move(conn, rep_id, parent, o["san"], mine=True)
+    return commit_move(conn, rep_id, parent, san, mine=True)
 
 
 FreqList = Callable[[str], list[dict]]
@@ -174,6 +282,7 @@ class LineResult(TypedDict):
 
 def commit_line(
     conn: sqlite3.Connection,
+    rep_id: int,
     root_fen: str,
     sans: list[str],
     color: str,
@@ -199,12 +308,12 @@ def commit_line(
     def fan_out(at: str, spine_san: Optional[str]) -> None:
         res["opp_nodes"] += 1
         for s in _covered_replies(replies_fn(at), spine_san):
-            if commit_move(conn, at, s, mine=False)["edge_created"]:
+            if commit_move(conn, rep_id, at, s, mine=False)["edge_created"]:
                 res["covered_edges"] += 1
 
     for san in sans:
         if fen.side_to_move(node) == side:
-            set_my_move(conn, node, san)
+            set_my_move(conn, rep_id, node, san)
             res["my_moves"] += 1
         else:
             fan_out(node, san)
@@ -219,18 +328,35 @@ def commit_line(
     return res
 
 
-def set_plan_note(conn: sqlite3.Connection, fen_str: str, text: str) -> None:
+# --- notes -----------------------------------------------------------------
+
+def set_plan_note(
+    conn: sqlite3.Connection, rep_id: int, fen_str: str, text: str
+) -> None:
     key = fen.normalize(fen_str)
-    add_position(conn, key)
-    conn.execute("UPDATE positions SET plan_note=? WHERE fen=?", (text, key))
+    conn.execute(
+        "INSERT INTO repertoire_notes (repertoire_id, fen, plan_note)"
+        " VALUES (?,?,?)"
+        " ON CONFLICT (repertoire_id, fen) DO UPDATE SET plan_note=excluded.plan_note",
+        (rep_id, key, text),
+    )
+
+
+def get_plan_note(conn: sqlite3.Connection, rep_id: int, fen_str: str) -> str:
+    row = conn.execute(
+        "SELECT plan_note FROM repertoire_notes WHERE repertoire_id=? AND fen=?",
+        (rep_id, fen.normalize(fen_str)),
+    ).fetchone()
+    return row["plan_note"] if row and row["plan_note"] else ""
 
 
 def set_why_note(
-    conn: sqlite3.Connection, from_fen: str, san: str, text: str
+    conn: sqlite3.Connection, rep_id: int, from_fen: str, san: str, text: str
 ) -> None:
     conn.execute(
-        "UPDATE edges SET why_note=? WHERE from_fen=? AND san=?",
-        (text, fen.normalize(from_fen), san),
+        "UPDATE edges SET why_note=?"
+        " WHERE repertoire_id=? AND from_fen=? AND san=?",
+        (text, rep_id, fen.normalize(from_fen), san),
     )
 
 
@@ -238,7 +364,8 @@ def enrich_position(conn: sqlite3.Connection, fen_str: str) -> None:
     """Fill in opening name/ECO (Lichess) and analyzed depth (Stockfish).
 
     Online: hits Lichess (cached) and runs the engine (cached). Optional —
-    the graph is fully usable without it.
+    the graph is fully usable without it. Position data is shared across
+    repertoires, so this isn't repertoire-scoped.
     """
     key = fen.normalize(fen_str)
     add_position(conn, key)
